@@ -5,16 +5,18 @@ import os
 import shutil
 from contextlib import contextmanager
 from tempfile import mkdtemp
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import requests
 from appdirs import user_cache_dir, user_data_dir
-
+from icecream import ic 
 from label_studio_sdk._extensions.label_studio_tools.core.utils.params import get_env
 
 _DIR_APP_NAME = "label-studio"
-LOCAL_FILES_DOCUMENT_ROOT = get_env(
-    "LOCAL_FILES_DOCUMENT_ROOT", default=os.path.abspath(os.sep)
+LOCAL_FILES_DOCUMENT_ROOT = (
+    get_env(
+        "LOCAL_FILES_DOCUMENT_ROOT", default=os.path.abspath(os.sep)
+    ) or get_env("LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT", default=os.path.abspath(os.sep))
 )
 VERIFY_SSL = get_env("VERIFY_SSL", default=True, is_bool=True)
 
@@ -103,6 +105,7 @@ def get_local_path(
     # instead of downloading them from LS instance
     if is_local_storage_file:
         filepath = url.split("?d=")[1]
+        filepath = unquote(filepath)
         filepath = os.path.join(LOCAL_FILES_DOCUMENT_ROOT, filepath)
         if os.path.exists(filepath):
             logger.debug(
