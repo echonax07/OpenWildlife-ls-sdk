@@ -39,10 +39,8 @@ from label_studio_sdk.converter.utils import (
 
 logger = logging.getLogger(__name__)
 
-
 class FormatNotSupportedError(NotImplementedError):
     pass
-
 
 class Format(Enum):
     JSON = 1
@@ -69,7 +67,6 @@ class Format(Enum):
             return Format[s]
         except KeyError:
             raise ValueError()
-
 
 class Converter(object):
     _FORMAT_INFO = {
@@ -560,18 +557,13 @@ class Converter(object):
         item_iterator = self.iter_from_dir if is_dir else self.iter_from_json_file
 
         summary_stats = {}
-        summary_data = [
-            # Label, Count
-        ]
-        per_image_stats = [
-            # Task ID, Image URL, Label, Count
-        ]
+        per_image_stats = []
+        all_labels = set()  # To collect all unique labels across images
 
+        # First pass: collect all unique labels and summary stats
         for item in item_iterator(input_data):
-            # Extract the image URL and Task ID
             image_url = item["input"].get(self._data_keys[0], "")
             task_id = item["id"]
-
             image_stats = {"image_url": image_url, "task_id": task_id, "labels": {}}
 
             # Process the output data
@@ -595,33 +587,28 @@ class Converter(object):
                         
                         summary_stats[label_name] = summary_stats.get(label_name, 0) + 1
                         image_stats["labels"][label_name] = image_stats["labels"].get(label_name, 0) + 1
+                        all_labels.add(label_name)
 
-            task_id_and_url_added = False
             if image_stats["labels"]:
-                for label, count in image_stats["labels"].items():
-                    per_image_stats.append(
-                        [
-                            task_id if not task_id_and_url_added else None,
-                            image_url if not task_id_and_url_added else None,
-                            label,
-                            count,
-                        ]
-                    )
-                    task_id_and_url_added = True
-                per_image_stats.append([None, None, "Total", sum(image_stats["labels"].values())])
+                per_image_stats.append(image_stats)
 
         # Prepare summary data
+        summary_data = []
         for label, count in summary_stats.items():
             summary_data.append([label, count])
         summary_data.append(["Total", sum(summary_stats.values())])
 
+        # Sort labels for consistent column ordering
+        all_labels = sorted(list(all_labels))
+
+        # Create Excel workbook
         wb = Workbook()
         ws = wb.active
         ws.title = "Summary"
+
         # Section 1: Summary
         ws.append(["Summary"])
         ws.cell(row=ws.max_row, column=1).style = heading1
-        # Pop the first row and make it bold
         ws.append(["Label", "Count"])
         for col_idx in range(1, 3):
             ws.cell(row=ws.max_row, column=col_idx).font = Font(bold=True)
@@ -635,47 +622,25 @@ class Converter(object):
         ws.cell(row=ws.max_row, column=1).style = heading1
 
         # Header for per-image stats
-        start_row = ws.max_row + 1
-        ws.append(["Task ID", "Image URL", "Label", "Count"])
-        for col_idx in range(1, 5):
+        header = ["Task ID", "Image URL"] + all_labels + ["Total Count"]
+        ws.append(header)
+        for col_idx in range(1, len(header) + 1):
             ws.cell(row=ws.max_row, column=col_idx).font = Font(bold=True)
 
-        # Keep track of image rows to merge Task ID and Image URL
-        current_image_id = None
-        merge_start = None
-
-        for idx, row in enumerate(per_image_stats):
+        # Populate per-image stats
+        for image_stats in per_image_stats:
+            row = [image_stats["task_id"], image_stats["image_url"]]
+            total_count = sum(image_stats["labels"].values())
+            # Add count for each label, or 0 if label not present in this image
+            for label in all_labels:
+                row.append(image_stats["labels"].get(label, 0))
+            row.append(total_count)
             ws.append(row)
-            task_id, image_url, _, _ = row
-            current_row = ws.max_row
-
-            # Detect a new image row
-            if task_id is not None or image_url is not None:
-                if merge_start is not None:
-                    # Merge the previous image cells
-                    ws.merge_cells(start_row=merge_start, start_column=1, end_row=current_row - 1, end_column=1)
-                    ws.merge_cells(start_row=merge_start, start_column=2, end_row=current_row - 1, end_column=2)
-                    for r in range(merge_start, current_row):
-                        ws.cell(row=r, column=1).alignment = Alignment(vertical="center")
-                        ws.cell(row=r, column=2).alignment = Alignment(vertical="center")
-                merge_start = current_row
-            elif merge_start is None:
-                merge_start = current_row
-
-        # Merge final group
-        if merge_start is not None:
-            end_row = ws.max_row
-            ws.merge_cells(start_row=merge_start, start_column=1, end_row=end_row, end_column=1)
-            ws.merge_cells(start_row=merge_start, start_column=2, end_row=end_row, end_column=2)
-            for r in range(merge_start, end_row + 1):
-                ws.cell(row=r, column=1).alignment = Alignment(vertical="center")
-                ws.cell(row=r, column=2).alignment = Alignment(vertical="center")
 
         # Save the file
         output_file = os.path.join(output_dir, "result.xlsx")
         wb.save(output_file)
         return True
-
 
     def convert_to_conll2003(self, input_data, output_dir, is_dir=True):
         self._check_format(Format.CONLL2003)
